@@ -113,6 +113,5 @@
     <ClInclude Include="Mhyprot\win_utils.hpp">
       <Filter>Mhyprot</Filter>
     </ClInclude>
-    <ClInclude Include="vector.h" />
   </ItemGroup>
 </Project>
