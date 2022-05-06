@@ -63,7 +63,7 @@ auto DrawLine(const ImVec2& aPoint1, const ImVec2 aPoint2, ImU32 aColor, const F
 	vList->AddLine(aPoint1, aPoint2, aColor, aLineWidth);
 }
 
-auto DrawBox(float x, float y, float w, float h, ImColor color)-> VOID
+auto DrawBox(ImColor color, float x, float y, float w, float h)-> VOID
 {
 	DrawLine(ImVec2(x, y), ImVec2(x + w, y), color, 1.3f); // top 
 	DrawLine(ImVec2(x, y - 1.3f), ImVec2(x, y + h + 1.4f), color, 1.3f); // left
@@ -127,6 +127,32 @@ auto DrawOutlinedText(ImFont* pFont, const std::string& text, const ImVec2& pos,
 		index++;
 	}
 	ImGui::PopFont();
+}
+
+auto ShieldBar(int x, int y, int w, int h, int pshield)->VOID
+{
+	int pshieldValue = max(0, min(pshield, 100));
+	float shieldPerc = pshieldValue / 100.f;
+
+	ImColor barColor = ImColor(1.f, 0.f, 1.f, 1.0f);
+	if (pshieldValue > 100)
+	{
+		barColor = ImColor(1.f * 200, 0.f, 0.f, 1.f);
+	}
+	else if (pshieldValue > 75)
+	{
+		barColor = ImColor(0.772f, 0.f, 1.f, 1.f);
+	}
+	else if (pshieldValue > 50)
+	{
+		barColor = ImColor(0.f, 0.f, 1.f, 1.f);
+	}
+	else if (pshieldValue > 0)
+	{
+		barColor = ImColor(1.f, 1.f, 1.f, 1.0f);
+	}
+
+	RectFilled(x, y, x + w, y + (int)(((float)h / 100.0f) * (float)pshield), barColor, 0.0f, 0);
 }
 
 auto DrawCorneredBox(float X, float Y, float W, float H, const ImU32& color, float thickness) -> VOID
