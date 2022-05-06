@@ -1,8 +1,15 @@
 #include "function.h"
 #include "overlay.h"
+#include "cfg.h"
 #include "Mhyprot/mhyprot.hpp"
+#include <intrin.h>
+#include <corecrt_math_defines.h>"
+#include <vector>
 
+
+bool ShowMenu = true;
 namespace OverlayWindow
+
 {
 	WNDCLASSEX WindowClass;
 	HWND Hwnd;
@@ -22,268 +29,191 @@ typedef struct _EntityList
 	uintptr_t actor_pawn;
 	uintptr_t actor_mesh;
 	uintptr_t actor_state;
+	uintptr_t actor_root;
 	int actor_id;
 }EntityList;
 std::vector<EntityList> entityList;
 
-
-auto CallHacks()->VOID
-{
-	while (true)
-	{
-		if (CFG.b_NoRecoil)
-		{
-			write<int>(GameVars.equipped_weapon_type + 0x188, 50);
-			write<float>(GameVars.equipped_weapon_type + 0x100, 0); // HorizontalCurve
-			write<float>(GameVars.equipped_weapon_type + 0x108, 0); // HorizontalCurve
-		}
-		Sleep(10);
-	}	
-}
-auto CallAimbot()->VOID
-{
-	while (true)
-	{
-		auto EntityList_Copy = entityList;
-
-		bool isAimbotActive = CFG.b_Aimbot && GetAimKey();
-		if (isAimbotActive)
-		{
-			float target_dist = FLT_MAX;
-			EntityList target_entity = {};
-
-			for (int index = 0; index < EntityList_Copy.size(); ++index)
-			{
-				auto Entity = EntityList_Copy[index];
-
-				if (!Entity.actor_mesh)
-					continue;
-
-				auto head_pos = GetBoneWithRotation(Entity.actor_mesh, 28);
-				auto targethead = ProjectWorldToScreen(Vector3(head_pos.x, head_pos.y, head_pos.z + 15));
-
-				float x = targethead.x - GameVars.ScreenWidth / 2.0f;
-				float y = targethead.y - GameVars.ScreenHeight / 2.0f;
-				float crosshair_dist = sqrtf((x * x) + (y * y));
-
-				if (crosshair_dist <= FLT_MAX && crosshair_dist <= target_dist)
-				{
-					if (crosshair_dist > CFG.AimbotFOV) // FOV
-						continue;
-
-					target_dist = crosshair_dist;
-					target_entity = Entity;
-
-				}
-			}	
-
-			if (target_entity.actor_mesh != 0 || target_entity.actor_pawn != 0 || target_entity.actor_id != 0)
-			{
-
-				if (target_entity.actor_pawn == GameVars.local_player_pawn)
-					continue;
-
-				if (!isVisible(target_entity.actor_mesh))
-					continue;
-
-				auto head_pos = GetBoneWithRotation(target_entity.actor_mesh, 28);
-				auto targethead = ProjectWorldToScreen(Vector3(head_pos.x, head_pos.y, head_pos.z + 15));
-				move_to(targethead.x, targethead.y);
-			}
-		}
-		Sleep(10);
-	}
-}
 auto GameCache()->VOID
 {
 	while (true)
 	{
 		std::vector<EntityList> tmpList;
 
-		GameVars.u_world = read<DWORD_PTR>(GameVars.dwProcess_Base + GameOffset.offset_u_world);
-		GameVars.game_instance = read<DWORD_PTR>(GameVars.u_world + GameOffset.offset_game_instance); 
-		GameVars.local_player_array = read<DWORD_PTR>(GameVars.game_instance + GameOffset.offset_local_players_array); 
+		GameVars.u_world = read<DWORD_PTR>(GameVars.dwProcess_Base + GameOffset.offset_uworld);
+		GameVars.game_instance = read<DWORD_PTR>(GameVars.u_world + 0x180); //OwningGameInstance 
+		GameVars.local_player_array = read<DWORD_PTR>(GameVars.game_instance + 0x38);  // LocalPlayers
 		GameVars.local_player = read<DWORD_PTR>(GameVars.local_player_array);
-		GameVars.local_player_controller = read<DWORD_PTR>(GameVars.local_player + GameOffset.offset_player_controller); 
-		GameVars.local_player_pawn = read<DWORD_PTR>(GameVars.local_player_controller + GameOffset.offset_apawn); 
-		GameVars.local_player_root = read<DWORD_PTR>(GameVars.local_player_pawn + GameOffset.offset_root_component);
-		GameVars.local_player_state = read<DWORD_PTR>(GameVars.local_player_pawn + GameOffset.offset_player_state); 
-		GameVars.ranged_weapon_component = read<DWORD_PTR>(GameVars.local_player_pawn + GameOffset.offset_ranged_weapon_component); 
-		GameVars.equipped_weapon_type = read<DWORD_PTR>(GameVars.ranged_weapon_component + GameOffset.offset_equipped_weapon_type); 
-		GameVars.persistent_level = read<DWORD_PTR>(GameVars.u_world + GameOffset.offset_persistent_level);
-		GameVars.actors = read<DWORD_PTR>(GameVars.persistent_level + GameOffset.offset_actor_array); 
-		GameVars.actor_count = read<int>(GameVars.persistent_level + GameOffset.offset_actor_count); 
-
+		GameVars.local_player_controller = read<DWORD_PTR>(GameVars.local_player + 0x30); // 	PlayerController
+		GameVars.local_player_pawn = read<DWORD_PTR>(GameVars.local_player_controller + 0x2A8); // AcknowledgedPawn
+		GameVars.local_player_root = read<DWORD_PTR>(GameVars.local_player_pawn + 0x138); // RootComponent
+		GameVars.local_player_state = read<DWORD_PTR>(GameVars.local_player_pawn + 0x230); // PlayerState
+		GameVars.persistent_level = read<DWORD_PTR>(GameVars.u_world + 0x30); // PersistentLevel
+		GameVars.actor_count = read<int>(GameVars.persistent_level + 0xA0); // MaxPacket
+		
+		GameVars.actors = read<DWORD_PTR>(GameVars.persistent_level + 0x98); // OwningActor
+		
 		for (int index = 0; index < GameVars.actor_count; ++index)
 		{
 
 			auto actor_pawn = read<uintptr_t>(GameVars.actors + index * 0x8);
-			if (actor_pawn == 0x00)
+			if (!actor_pawn)continue;
+
+			auto actor_id = read<int>(actor_pawn + 0x18);
+			if (!actor_id)continue;
+
+			auto actor_mesh = read<uintptr_t>(actor_pawn + 0x288); // Mesh
+			if (!actor_mesh)continue;
+
+			auto actor_state = read<uintptr_t>(actor_pawn + 0x230); //PlayerState
+			if (!actor_state)continue;
+
+			auto actor_root = read<uintptr_t>(actor_pawn + 0x138); // RootComponent
+			if (!actor_root)continue;
+
+			auto name = BloodHunt::GetNameFromFName(actor_id);
+			
+
+			if (actor_pawn == GameVars.local_player_pawn) // Ignore Self?
 				continue;
 
-			auto actor_id = read<int>(actor_pawn + GameOffset.offset_actor_id);
-			auto actor_mesh = read<uintptr_t>(actor_pawn + GameOffset.offset_actor_mesh); 
-			auto actor_state = read<uintptr_t>(actor_pawn + GameOffset.offset_player_state); 
-			auto name = GetNameFromFName(actor_id);
-
-
+			EntityList Entity{ };
+			Entity.actor_pawn = actor_pawn;
+			
 			if (name == "TBP_ElysiumPlayer_C" || name == "TBP_Player_C" || name == "TBP_NPC_Primogen_C" || name == "TBP_NPC_C")
-			{			
-				if (actor_pawn != NULL || actor_id != NULL || actor_state != NULL || actor_mesh != NULL)
+			{
+				if (actor_mesh != NULL)
 				{
-					EntityList Entity{ };
-					Entity.actor_pawn = actor_pawn;
 					Entity.actor_id = actor_id;
 					Entity.actor_state = actor_state;
+					Entity.actor_root = actor_root;
 					Entity.actor_mesh = actor_mesh;
 					tmpList.push_back(Entity);
 				}
 			}
 		}
 		entityList = tmpList;
-		Sleep(100);
+		Sleep(2);
 	}
 }
 auto RenderVisual()->VOID
 {
 	auto EntityList_Copy = entityList;
-
+	
 	for (int index = 0; index < EntityList_Copy.size(); ++index)
 	{
-		auto Entity = EntityList_Copy[index];
+		
+		EntityList Entity = EntityList_Copy[index];
+		
+		auto local_pos = read<Vector3>(GameVars.local_player_root + 0x11C);
+		
+		auto head_pos = BloodHunt::GetBoneWithRotation(Entity.actor_mesh, 28);
+		auto bone_pos = BloodHunt::GetBoneWithRotation(Entity.actor_mesh, 0);
+		auto BottomBox = BloodHunt::ProjectWorldToScreen(bone_pos);
+		auto HeadBox = BloodHunt::ProjectWorldToScreen(Vector3(head_pos.x, head_pos.y, head_pos.z + 15));
 
-		if (Entity.actor_pawn == GameVars.local_player_pawn)
-			continue;
+		auto entity_distance = local_pos.Distance(head_pos) / 100.f;
 
-		if (!Entity.actor_mesh || !Entity.actor_state || !Entity.actor_pawn)
-			continue;
-
-		auto local_pos = read<Vector3>(GameVars.local_player_root + GameOffset.offset_relative_location);
-		auto head_pos = GetBoneWithRotation(Entity.actor_mesh, 28);
-		auto bone_pos = GetBoneWithRotation(Entity.actor_mesh, 0);
-
-		auto BottomBox = ProjectWorldToScreen(bone_pos);
-		auto TopBox = ProjectWorldToScreen(Vector3(head_pos.x, head_pos.y, head_pos.z + 15));
-
-		auto entity_distance = local_pos.Distance(bone_pos);
-
-		auto CornerHeight = abs(TopBox.y - BottomBox.y);
+		auto CornerHeight = abs(HeadBox.y - BottomBox.y);
 		auto CornerWidth = CornerHeight * 0.65;
-
-		auto bVisible = isVisible(Entity.actor_mesh);
-		auto ESP_Color = GetVisibleColor(bVisible);
-
-		if (CFG.b_Aimbot)
-		{
-			if (CFG.b_AimbotFOV)
-			{
-				DrawCircle(GameVars.ScreenWidth / 2, GameVars.ScreenHeight / 2, CFG.AimbotFOV, CFG.FovColor, 0);
-			}
-		}
+		
 		if (CFG.b_Visual)
 		{
-			if (entity_distance < CFG.max_distance)
+
+			if (CFG.b_EspBox)
 			{
-				if (CFG.b_EspBox)
+				if (CFG.in_BoxType == 0)
 				{
-					if (CFG.BoxType == 0)
-					{
-						DrawBox(TopBox.x - (CornerWidth / 2), TopBox.y, CornerWidth, CornerHeight, ESP_Color);
-					}
-					else if (CFG.BoxType == 1)
-					{
-						DrawCorneredBox(TopBox.x - (CornerWidth / 2), TopBox.y, CornerWidth, CornerHeight, ESP_Color, 1.5);
-					}
+					DrawBox(CFG.BoxColor, HeadBox.x - (CornerWidth / 2), HeadBox.y, CornerWidth, CornerHeight);
 				}
-				if (CFG.b_EspLine)
+				else if (CFG.in_BoxType == 1)
 				{
-
-					if (CFG.LineType == 0)
-					{
-						DrawLine(ImVec2(static_cast<float>(GameVars.ScreenWidth / 2), static_cast<float>(GameVars.ScreenHeight)), ImVec2(BottomBox.x, BottomBox.y), ESP_Color, 1.5f); //LINE FROM BOTTOM SCREEN
-					}
-					if (CFG.LineType == 1)
-					{
-						DrawLine(ImVec2(static_cast<float>(GameVars.ScreenWidth / 2), 0.f), ImVec2(BottomBox.x, BottomBox.y), ESP_Color, 1.5f); //LINE FROM TOP SCREEN
-					}
-					if (CFG.LineType == 2)
-					{
-						DrawLine(ImVec2(static_cast<float>(GameVars.ScreenWidth / 2), static_cast<float>(GameVars.ScreenHeight / 2)), ImVec2(BottomBox.x, BottomBox.y), ESP_Color, 1.5f); //LINE FROM CROSSHAIR
-					}
+					DrawCorneredBox(HeadBox.x - (CornerWidth / 2), HeadBox.y, CornerWidth, CornerHeight, CFG.BoxColor, 1.5);
 				}
-				if (CFG.b_EspDistance)
+			}
+			if (CFG.b_EspLine)
+			{
+
+				if (CFG.in_LineType == 0)
 				{
-					char dist[64];
-					sprintf_s(dist, "Dist:%.fm", entity_distance);
-					DrawOutlinedText(Verdana, dist, ImVec2(BottomBox.x, BottomBox.y), 14.0f, ImColor(255, 255, 255), true);
+					DrawLine(ImVec2(static_cast<float>(GameVars.ScreenWidth / 2), static_cast<float>(GameVars.ScreenHeight)), ImVec2(BottomBox.x, BottomBox.y), CFG.LineColor, 1.5f); //LINE FROM BOTTOM SCREEN
 				}
-				if (CFG.b_EspName)
+				if (CFG.in_LineType == 1)
 				{
-					auto PlayerName = read<FString>(Entity.actor_state + GameOffset.offset_player_name);
-					DrawOutlinedText(Verdana, PlayerName.ToString(), ImVec2(TopBox.x, TopBox.y - 20), 14.0f, ImColor(255, 255, 255), true);
+					DrawLine(ImVec2(static_cast<float>(GameVars.ScreenWidth / 2), 0.f), ImVec2(BottomBox.x, BottomBox.y), CFG.LineColor, 1.5f); //LINE FROM TOP SCREEN
 				}
-				if (CFG.b_EspHealth)
+				if (CFG.in_LineType == 2)
 				{
-					auto Health = read<float>(Entity.actor_pawn + GameOffset.offset_health);
-					auto MaxHealth = read<float>(Entity.actor_pawn + GameOffset.offset_max_health); // idk how this works lmao
-					auto procentage = Health * 100 / MaxHealth;
-
-					float width = CornerWidth / 10;
-					if (width < 2.f) width = 2.;
-					if (width > 3) width = 3.;
-
-					HealthBar(TopBox.x - (CornerWidth / 2) - 8, TopBox.y, width, BottomBox.y - TopBox.y, procentage, true);
+					DrawLine(ImVec2(static_cast<float>(GameVars.ScreenWidth / 2), static_cast<float>(GameVars.ScreenHeight / 2)), ImVec2(BottomBox.x, BottomBox.y), CFG.LineColor, 1.5f); //LINE FROM CROSSHAIR
 				}
-				if (CFG.b_EspSkeleton)
-				{
+			}
+			if (CFG.b_EspDistance)
+			{
+				char dist[64];
+				sprintf_s(dist, "Dist:%.fm", entity_distance);
+				DrawOutlinedText(Verdana, dist, ImVec2(BottomBox.x, BottomBox.y), 14.0f, ImColor(255, 255, 255), true);
+			}
+			if (CFG.b_EspHealth)
+			{
+				auto Health = read<float>(Entity.actor_pawn + 0x698);
+				auto MaxHealth = read<float>(Entity.actor_pawn + 0x56C); // idk how this works lmao
+				auto procentage = Health * 100 / MaxHealth;
 
-					Vector3 vHeadOut = ProjectWorldToScreen(GetBoneWithRotation(Entity.actor_mesh, 28));
-					Vector3 vNeckOut = ProjectWorldToScreen(GetBoneWithRotation(Entity.actor_mesh, 27));
-					Vector3 vSpine1Out = ProjectWorldToScreen(GetBoneWithRotation(Entity.actor_mesh, 27));
-					Vector3 vSpine2Out = ProjectWorldToScreen(GetBoneWithRotation(Entity.actor_mesh, 25));
-					Vector3 vSpine3Out = ProjectWorldToScreen(GetBoneWithRotation(Entity.actor_mesh, 24));
-					Vector3 vPelvisOut = ProjectWorldToScreen(GetBoneWithRotation(Entity.actor_mesh, 9));
-					Vector3 vRightThighOut = ProjectWorldToScreen(GetBoneWithRotation(Entity.actor_mesh, 17));
-					Vector3 vLeftThighOut = ProjectWorldToScreen(GetBoneWithRotation(Entity.actor_mesh, 10));
-					Vector3 vRightCalfOut = ProjectWorldToScreen(GetBoneWithRotation(Entity.actor_mesh, 18));
-					Vector3 vLeftCalfOut = ProjectWorldToScreen(GetBoneWithRotation(Entity.actor_mesh, 11));
-					Vector3 vRightFootOut = ProjectWorldToScreen(GetBoneWithRotation(Entity.actor_mesh, 19));
-					Vector3 vLeftFootOut = ProjectWorldToScreen(GetBoneWithRotation(Entity.actor_mesh, 12));
-					Vector3 vUpperArmRightOut = ProjectWorldToScreen(GetBoneWithRotation(Entity.actor_mesh, 109));
-					Vector3 vUpperArmLeftOut = ProjectWorldToScreen(GetBoneWithRotation(Entity.actor_mesh, 64));
-					Vector3 vLowerArmRightOut = ProjectWorldToScreen(GetBoneWithRotation(Entity.actor_mesh, 110));
-					Vector3 vLowerArmLeftOut = ProjectWorldToScreen(GetBoneWithRotation(Entity.actor_mesh, 65));
-					Vector3 vHandRightOut = ProjectWorldToScreen(GetBoneWithRotation(Entity.actor_mesh, 111));
-					Vector3 vHandLeftOut = ProjectWorldToScreen(GetBoneWithRotation(Entity.actor_mesh, 66));
-					Vector3 vFootOutOut = ProjectWorldToScreen(GetBoneWithRotation(Entity.actor_mesh, 0));
+				float width = CornerWidth / 10;
+				if (width < 2.f) width = 2.;
+				if (width > 3) width = 3.;
+
+				HealthBar(HeadBox.x - (CornerWidth / 2) - 7, HeadBox.y, width, BottomBox.y - HeadBox.y, procentage, true);
+			}
+			if (CFG.b_EspSkeleton)
+			{
+
+				Vector3 vHeadOut = BloodHunt::ProjectWorldToScreen(BloodHunt::GetBoneWithRotation(Entity.actor_mesh, 28));
+				Vector3 vNeckOut = BloodHunt::ProjectWorldToScreen(BloodHunt::GetBoneWithRotation(Entity.actor_mesh, 27));
+				Vector3 vSpine1Out = BloodHunt::ProjectWorldToScreen(BloodHunt::GetBoneWithRotation(Entity.actor_mesh, 27));
+				Vector3 vSpine2Out = BloodHunt::ProjectWorldToScreen(BloodHunt::GetBoneWithRotation(Entity.actor_mesh, 25));
+				Vector3 vSpine3Out = BloodHunt::ProjectWorldToScreen(BloodHunt::GetBoneWithRotation(Entity.actor_mesh, 24));
+				Vector3 vPelvisOut = BloodHunt::ProjectWorldToScreen(BloodHunt::GetBoneWithRotation(Entity.actor_mesh, 9));
+				Vector3 vRightThighOut = BloodHunt::ProjectWorldToScreen(BloodHunt::GetBoneWithRotation(Entity.actor_mesh, 17));
+				Vector3 vLeftThighOut = BloodHunt::ProjectWorldToScreen(BloodHunt::GetBoneWithRotation(Entity.actor_mesh, 10));
+				Vector3 vRightCalfOut = BloodHunt::ProjectWorldToScreen(BloodHunt::GetBoneWithRotation(Entity.actor_mesh, 18));
+				Vector3 vLeftCalfOut = BloodHunt::ProjectWorldToScreen(BloodHunt::GetBoneWithRotation(Entity.actor_mesh, 11));
+				Vector3 vRightFootOut = BloodHunt::ProjectWorldToScreen(BloodHunt::GetBoneWithRotation(Entity.actor_mesh, 19));
+				Vector3 vLeftFootOut = BloodHunt::ProjectWorldToScreen(BloodHunt::GetBoneWithRotation(Entity.actor_mesh, 12));
+				Vector3 vUpperArmRightOut = BloodHunt::ProjectWorldToScreen(BloodHunt::GetBoneWithRotation(Entity.actor_mesh, 109));
+				Vector3 vUpperArmLeftOut = BloodHunt::ProjectWorldToScreen(BloodHunt::GetBoneWithRotation(Entity.actor_mesh, 64));
+				Vector3 vLowerArmRightOut = BloodHunt::ProjectWorldToScreen(BloodHunt::GetBoneWithRotation(Entity.actor_mesh, 110));
+				Vector3 vLowerArmLeftOut = BloodHunt::ProjectWorldToScreen(BloodHunt::GetBoneWithRotation(Entity.actor_mesh, 65));
+				Vector3 vHandRightOut = BloodHunt::ProjectWorldToScreen(BloodHunt::GetBoneWithRotation(Entity.actor_mesh, 111));
+				Vector3 vHandLeftOut = BloodHunt::ProjectWorldToScreen(BloodHunt::GetBoneWithRotation(Entity.actor_mesh, 66));
+				Vector3 vFootOutOut = BloodHunt::ProjectWorldToScreen(BloodHunt::GetBoneWithRotation(Entity.actor_mesh, 0));
 
 
-					DrawLine(ImVec2(vHeadOut.x, vHeadOut.y), ImVec2(vNeckOut.x, vNeckOut.y), ESP_Color, 1.5f);
-					DrawLine(ImVec2(vNeckOut.x, vNeckOut.y), ImVec2(vSpine1Out.x, vSpine1Out.y), ESP_Color, 1.5f);
-					DrawLine(ImVec2(vSpine1Out.x, vSpine1Out.y), ImVec2(vSpine2Out.x, vSpine2Out.y), ESP_Color, 1.5f);
-					DrawLine(ImVec2(vSpine2Out.x, vSpine2Out.y), ImVec2(vSpine3Out.x, vSpine3Out.y), ESP_Color, 1.5f);
+				DrawLine(ImVec2(vHeadOut.x, vHeadOut.y), ImVec2(vNeckOut.x, vNeckOut.y), CFG.SkeletonColor, 1.5f);
+				DrawLine(ImVec2(vNeckOut.x, vNeckOut.y), ImVec2(vSpine1Out.x, vSpine1Out.y), CFG.SkeletonColor, 1.5f);
+				DrawLine(ImVec2(vSpine1Out.x, vSpine1Out.y), ImVec2(vSpine2Out.x, vSpine2Out.y), CFG.SkeletonColor, 1.5f);
+				DrawLine(ImVec2(vSpine2Out.x, vSpine2Out.y), ImVec2(vSpine3Out.x, vSpine3Out.y), CFG.SkeletonColor, 1.5f);
 
-					DrawLine(ImVec2(vSpine1Out.x, vSpine1Out.y), ImVec2(vUpperArmRightOut.x, vUpperArmRightOut.y), ESP_Color, 1.5f);
-					DrawLine(ImVec2(vSpine1Out.x, vSpine1Out.y), ImVec2(vUpperArmLeftOut.x, vUpperArmLeftOut.y), ESP_Color, 1.5f);
+				DrawLine(ImVec2(vSpine1Out.x, vSpine1Out.y), ImVec2(vUpperArmRightOut.x, vUpperArmRightOut.y), CFG.SkeletonColor, 1.5f);
+				DrawLine(ImVec2(vSpine1Out.x, vSpine1Out.y), ImVec2(vUpperArmLeftOut.x, vUpperArmLeftOut.y), CFG.SkeletonColor, 1.5f);
 
-					DrawLine(ImVec2(vSpine1Out.x, vSpine1Out.y), ImVec2(vPelvisOut.x, vPelvisOut.y), ESP_Color, 1.5f);
+				DrawLine(ImVec2(vSpine1Out.x, vSpine1Out.y), ImVec2(vPelvisOut.x, vPelvisOut.y), CFG.SkeletonColor, 1.5f);
 
-					DrawLine(ImVec2(vPelvisOut.x, vPelvisOut.y), ImVec2(vRightThighOut.x, vRightThighOut.y), ESP_Color, 1.5f);
-					DrawLine(ImVec2(vPelvisOut.x, vPelvisOut.y), ImVec2(vLeftThighOut.x, vLeftThighOut.y), ESP_Color, 1.5f);
+				DrawLine(ImVec2(vPelvisOut.x, vPelvisOut.y), ImVec2(vRightThighOut.x, vRightThighOut.y), CFG.SkeletonColor, 1.5f);
+				DrawLine(ImVec2(vPelvisOut.x, vPelvisOut.y), ImVec2(vLeftThighOut.x, vLeftThighOut.y), CFG.SkeletonColor, 1.5f);
 
-					DrawLine(ImVec2(vRightThighOut.x, vRightThighOut.y), ImVec2(vRightCalfOut.x, vRightCalfOut.y), ESP_Color, 1.5f);
-					DrawLine(ImVec2(vLeftThighOut.x, vLeftThighOut.y), ImVec2(vLeftCalfOut.x, vLeftCalfOut.y), ESP_Color, 1.5f);
+				DrawLine(ImVec2(vRightThighOut.x, vRightThighOut.y), ImVec2(vRightCalfOut.x, vRightCalfOut.y), CFG.SkeletonColor, 1.5f);
+				DrawLine(ImVec2(vLeftThighOut.x, vLeftThighOut.y), ImVec2(vLeftCalfOut.x, vLeftCalfOut.y), CFG.SkeletonColor, 1.5f);
 
-					DrawLine(ImVec2(vRightCalfOut.x, vRightCalfOut.y), ImVec2(vRightFootOut.x, vRightFootOut.y), ESP_Color, 1.5f);
-					DrawLine(ImVec2(vLeftCalfOut.x, vLeftCalfOut.y), ImVec2(vLeftFootOut.x, vLeftFootOut.y), ESP_Color, 1.5f);
+				DrawLine(ImVec2(vRightCalfOut.x, vRightCalfOut.y), ImVec2(vRightFootOut.x, vRightFootOut.y), CFG.SkeletonColor, 1.5f);
+				DrawLine(ImVec2(vLeftCalfOut.x, vLeftCalfOut.y), ImVec2(vLeftFootOut.x, vLeftFootOut.y), CFG.SkeletonColor, 1.5f);
 
-					DrawLine(ImVec2(vUpperArmRightOut.x, vUpperArmRightOut.y), ImVec2(vLowerArmRightOut.x, vLowerArmRightOut.y), ESP_Color, 1.5f);
-					DrawLine(ImVec2(vUpperArmLeftOut.x, vUpperArmLeftOut.y), ImVec2(vLowerArmLeftOut.x, vLowerArmLeftOut.y), ESP_Color, 1.5f);
+				DrawLine(ImVec2(vUpperArmRightOut.x, vUpperArmRightOut.y), ImVec2(vLowerArmRightOut.x, vLowerArmRightOut.y), CFG.SkeletonColor, 1.5f);
+				DrawLine(ImVec2(vUpperArmLeftOut.x, vUpperArmLeftOut.y), ImVec2(vLowerArmLeftOut.x, vLowerArmLeftOut.y), CFG.SkeletonColor, 1.5f);
 
-					DrawLine(ImVec2(vLowerArmLeftOut.x, vLowerArmLeftOut.y), ImVec2(vHandLeftOut.x, vHandLeftOut.y), ESP_Color, 1.5f);
-					DrawLine(ImVec2(vLowerArmRightOut.x, vLowerArmRightOut.y), ImVec2(vHandRightOut.x, vHandRightOut.y), ESP_Color, 1.5f);
+				DrawLine(ImVec2(vLowerArmLeftOut.x, vLowerArmLeftOut.y), ImVec2(vHandLeftOut.x, vHandLeftOut.y), CFG.SkeletonColor, 1.5f);
+				DrawLine(ImVec2(vLowerArmRightOut.x, vLowerArmRightOut.y), ImVec2(vHandRightOut.x, vHandRightOut.y), CFG.SkeletonColor, 1.5f);
 
-				}
 			}
 		}
 
@@ -299,26 +229,23 @@ void InputHandler() {
 void Render()
 {
 	if (GetAsyncKeyState(VK_INSERT) & 1)
-		CFG.b_MenuShow = !CFG.b_MenuShow;
+		ShowMenu = !ShowMenu;
 
 	ImGui_ImplDX9_NewFrame();
 	ImGui_ImplWin32_NewFrame();
 	ImGui::NewFrame();
 	RenderVisual();
-	ImGui::GetIO().MouseDrawCursor = CFG.b_MenuShow;
+	ImGui::GetIO().MouseDrawCursor = ShowMenu;
 
-	if (CFG.b_MenuShow)
+	if (ShowMenu == true)
 	{
 		InputHandler();
 		ImGui::SetNextWindowSize(ImVec2(675, 410)); // 450,426
 		ImGui::PushFont(DefaultFont);
-		ImGui::Begin("Jenrix BloodHunt || jenrix#8201 //unknowncheats.me", 0, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar);
+		ImGui::Begin("Jenrix BloodHunt || jenrix#8201", 0, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar);
 
-		TabButton("Visual", &CFG.tab_index, 0, true);
-		TabButton("Aimbot", &CFG.tab_index, 1, true);
-		TabButton("Misc", &CFG.tab_index, 2, false);
-
-		if (CFG.tab_index == 0)
+		TabButton("Visual", &CFG.in_tab_index, 0, false);
+		if (CFG.in_tab_index == 0)
 		{
 			ImGui::Checkbox("Enabled Visual", &CFG.b_Visual);
 			if (CFG.b_Visual)
@@ -326,50 +253,32 @@ void Render()
 				ImGui::Checkbox("ESP Box", &CFG.b_EspBox);
 				if (CFG.b_EspBox)
 				{
-					ImGui::Combo("ESP Box Type", &CFG.BoxType, CFG.BoxTypes, 2);
+					ImGui::Combo("ESP Box Type", &CFG.in_BoxType, CFG.BoxTypes, 2);
+					if (ImGui::ColorEdit3("ESP Box Color", CFG.fl_BoxColor, ImGuiColorEditFlags_NoDragDrop))
+					{
+						CFG.BoxColor = ImColor(CFG.fl_BoxColor[0], CFG.fl_BoxColor[1], CFG.fl_BoxColor[2]);
+					}
 				}
 				ImGui::Checkbox("ESP Skeleton", &CFG.b_EspSkeleton);
+				if (CFG.b_EspSkeleton)
+				{
+					if (ImGui::ColorEdit3("ESP Skeleton Color", CFG.fl_SkeletonColor, ImGuiColorEditFlags_NoDragDrop))
+					{
+						CFG.SkeletonColor = ImColor(CFG.fl_SkeletonColor[0], CFG.fl_SkeletonColor[1], CFG.fl_SkeletonColor[2]);
+					}
+				}
 				ImGui::Checkbox("ESP Line", &CFG.b_EspLine);
 				if (CFG.b_EspLine)
 				{
-					ImGui::Combo("ESP Line Type", &CFG.LineType, CFG.LineTypes, 3);
-				}
-				ImGui::Checkbox("ESP Name", &CFG.b_EspName);
-				ImGui::Checkbox("ESP Distance", &CFG.b_EspDistance);
-				ImGui::Checkbox("ESP HealthBar", &CFG.b_EspHealth);
-				ImGui::SliderFloat("Max Distance", &CFG.max_distance, 1.0f, 300.0f);
-				if (ImGui::ColorEdit3("Visible Color", CFG.fl_VisibleColor, ImGuiColorEditFlags_NoDragDrop))
-				{
-					CFG.VisibleColor = ImColor(CFG.fl_VisibleColor[0], CFG.fl_VisibleColor[1], CFG.fl_VisibleColor[2]);
-				}
-				if (ImGui::ColorEdit3("Invisible Color", CFG.fl_InvisibleColor, ImGuiColorEditFlags_NoDragDrop))
-				{
-					CFG.InvisibleColor = ImColor(CFG.fl_InvisibleColor[0], CFG.fl_InvisibleColor[1], CFG.fl_InvisibleColor[2]);
-				}
-			}
-		}
-		else if (CFG.tab_index == 1)
-		{
-			ImGui::Checkbox("Enabled Aimbot", &CFG.b_Aimbot);
-			if (CFG.b_Aimbot)
-			{
-				ImGui::Checkbox("Show FOV", &CFG.b_AimbotFOV);
-				if (CFG.b_AimbotFOV)
-				{
-					ImGui::SliderFloat("FOV Size", &CFG.AimbotFOV, 1.0f, 150.f);
-					if (ImGui::ColorEdit3("FOV Color", CFG.fl_FovColor, ImGuiColorEditFlags_NoDragDrop))
+					ImGui::Combo("ESP Line Type", &CFG.in_LineType, CFG.LineTypes, 3);
+					if (ImGui::ColorEdit3("ESP Line Color", CFG.fl_LineColor, ImGuiColorEditFlags_NoDragDrop))
 					{
-						CFG.FovColor = ImColor(CFG.fl_FovColor[0], CFG.fl_FovColor[1], CFG.fl_FovColor[2]);
+						CFG.LineColor = ImColor(CFG.fl_LineColor[0], CFG.fl_LineColor[1], CFG.fl_LineColor[2]);
 					}
 				}
-				ImGui::Combo("Aimbot Key", &CFG.AimKey, keyItems, IM_ARRAYSIZE(keyItems));
-				ImGui::SliderFloat("Smoothing Value", &CFG.Smoothing, 1.0f, 10.0f);
-
+				ImGui::Checkbox("ESP Distance", &CFG.b_EspDistance);
+				ImGui::Checkbox("ESP HealthBar", &CFG.b_EspHealth);
 			}
-		}
-		else if (CFG.tab_index == 2)
-		{
-			ImGui::Checkbox("No Recoil", &CFG.b_NoRecoil);
 		}
 		ImGui::PopFont();
 		ImGui::End();
@@ -568,13 +477,16 @@ int main()
 	if (!GameVars.dwProcessId)
 	{
 		printf("[!] process \"%s\ was not found\n", GameVars.dwProcessName);
+		system("pause");
 	}
+	
 	if (!mhyprot::init())
 	{
 		printf("[!] failed to initialize vulnerable driver\n");
+		system("pause");
 		return -1;
 	}
-
+	
 	if (!mhyprot::driver_impl::driver_init(
 		false, // print debug
 		false // print seedmap
@@ -582,24 +494,25 @@ int main()
 	{
 		printf("[!] failed to initialize driver properly\n");
 		mhyprot::unload();
+		system("pause");
 		return -1;
 	}
+	
 	GameVars.dwProcess_Base = GetProcessBase(GameVars.dwProcessId);
 	if (!GameVars.dwProcess_Base)
 	{
 		printf("[!] failed to get baseadress\n");
+		system("pause");
 	}
-
+	
 	printf("[+] ProcessName: %s ID: (%d) base: %llx\n", GameVars.dwProcessName, GameVars.dwProcessId, GameVars.dwProcess_Base);
 
 	CreateThread(nullptr, NULL, reinterpret_cast<LPTHREAD_START_ROUTINE>(GameCache), nullptr, NULL, nullptr);
-	CreateThread(nullptr, NULL, reinterpret_cast<LPTHREAD_START_ROUTINE>(CallAimbot), nullptr, NULL, nullptr);
-	CreateThread(nullptr, NULL, reinterpret_cast<LPTHREAD_START_ROUTINE>(CallHacks), nullptr, NULL, nullptr);
-
+	
 
 	if (CreateConsole == false)
 		ShowWindow(GetConsoleWindow(), SW_HIDE);
-
+	
 	bool WindowFocus = false;
 	while (WindowFocus == false)
 	{
@@ -632,7 +545,7 @@ int main()
 	Verdana = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\Verdana.ttf", 16.0f);
 	io.Fonts->Build();
 
-
+	
 	while (TRUE)
 	{
 		MainLoop();
